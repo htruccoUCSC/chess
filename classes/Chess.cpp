@@ -52,15 +52,54 @@ void Chess::setUpBoard()
 }
 
 void Chess::FENtoBoard(const std::string& fen) {
-    // convert a FEN string to a board
-    // FEN is a space delimited string with 6 fields
-    // 1: piece placement (from white's perspective)
-    // NOT PART OF THIS ASSIGNMENT BUT OTHER THINGS THAT CAN BE IN A FEN STRING
-    // ARE BELOW
-    // 2: active color (W or B)
-    // 3: castling availability (KQkq or -)
-    // 4: en passant target square (in algebraic notation, or -)
-    // 5: halfmove clock (number of halfmoves since the last capture or pawn advance)
+    // take only the piece-placement portion this could be useful in the future
+    std::string placement = fen.substr(0, fen.find(' '));
+
+    // clear the boar
+    _grid->forEachSquare([](ChessSquare* square, int x, int y) {
+        square->destroyBit();
+    });
+
+    // helper lambda to convert FEN character to ChessPiece enum
+    auto fenCharToPiece = [](char c) -> ChessPiece {
+        switch (std::tolower(c)) {
+            case 'p': return Pawn;
+            case 'n': return Knight;
+            case 'b': return Bishop;
+            case 'r': return Rook;
+            case 'q': return Queen;
+            case 'k': return King;
+            default:  return NoPiece;
+        }
+    };
+
+    int row = 7;
+    int col   = 0;
+
+    // loop through the FEN string and place pieces on the board
+    for (char c : placement) {
+        // skip slashes and digits
+        if (c == '/') {
+            row--;
+            col = 0;
+        } else if (std::isdigit(c)) {
+            col += (c - '0');
+        } else {
+            // get piece type from FEN char
+            ChessPiece piece = fenCharToPiece(c);
+            // if it's a valid piece, create it and place it on the board
+            if (piece != NoPiece) {
+                // get board square and create correct piece
+                int playerNumber = std::isupper(c) ? 0 : 1;
+                Bit* bit = PieceForPlayer(playerNumber, piece);
+                ChessSquare* square = _grid->getSquare(col, row);
+                bit->setPosition(square->getPosition());
+                bit->setGameTag(playerNumber * 128 + piece);
+                square->setBit(bit);
+            }
+            col++;
+        }
+    }
 }
 
 bool Chess::actionForEmptyHolder(BitHolder &holder)
