@@ -1,6 +1,6 @@
 # Chess AI
 
-Currently contains chess with the ability for kings, pawns, and knights to move using a bitboard.
+Currently contains chess with the ability for all pieces to move using a bitboard and a magic bitboard. Piece also take correctly and the game does not allow incorrect moves when a king is in check.
 
 Built on macOS.
 

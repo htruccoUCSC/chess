@@ -1,6 +1,12 @@
 #include "Chess.h"
+#include "MagicBitboards.h"
 #include <limits>
 #include <cmath>
+#include <cctype>
+
+namespace {
+int g_magicBitboardsRefCount = 0;
+}
 
 void printBitboard(uint64_t bitboard) {
     std::cout << "\n  a b c d e f g h\n";
@@ -22,6 +28,10 @@ void printBitboard(uint64_t bitboard) {
 }
 
 Chess::Chess() {
+    if (g_magicBitboardsRefCount++ == 0) {
+        initMagicBitboards();
+    }
+
     _grid = new Grid(8, 8);
     for (int i = 0; i < 64; i++) {
         _knightBitboards[i] = generateKnightMovesBitboard(i);
@@ -49,6 +59,55 @@ Chess::Chess() {
 Chess::~Chess()
 {
     delete _grid;
+
+    if (--g_magicBitboardsRefCount == 0) {
+        cleanupMagicBitboards();
+    }
+}
+
+int Chess::getPieceBoardIndex(int color, int pieceType) const
+{
+    if (color == WHITE) {
+        switch (pieceType) {
+            case Pawn: return WhitePawns;
+            case Knight: return WhiteKnights;
+            case Bishop: return WhiteBishops;
+            case Rook: return WhiteRooks;
+            case Queen: return WhiteQueens;
+            case King: return WhiteKing;
+            default: return -1;
+        }
+    }
+
+    switch (pieceType) {
+        case Pawn: return BlackPawns;
+        case Knight: return BlackKnights;
+        case Bishop: return BlackBishops;
+        case Rook: return BlackRooks;
+        case Queen: return BlackQueens;
+        case King: return BlackKing;
+        default: return -1;
+    }
+}
+
+void Chess::rebuildAggregateBoards(BitBoard boards[NumBitBoards]) const
+{
+    boards[WhitePieces] = boards[WhitePawns].getData() |
+                         boards[WhiteKnights].getData() |
+                         boards[WhiteBishops].getData() |
+                         boards[WhiteRooks].getData() |
+                         boards[WhiteQueens].getData() |
+                         boards[WhiteKing].getData();
+
+    boards[BlackPieces] = boards[BlackPawns].getData() |
+                         boards[BlackKnights].getData() |
+                         boards[BlackBishops].getData() |
+                         boards[BlackRooks].getData() |
+                         boards[BlackQueens].getData() |
+                         boards[BlackKing].getData();
+
+    boards[OccupiedSquares] = boards[WhitePieces].getData() | boards[BlackPieces].getData();
+    boards[EmptySquares] = ~boards[OccupiedSquares].getData();
 }
 
 char Chess::pieceNotation(int x, int y) const
@@ -363,6 +422,148 @@ void Chess::generateKingMoves(std::vector<BitMove>& moves, BitBoard kingBoard, u
     });
 }
 
+void Chess::generateRookMoves(std::vector<BitMove>& moves, BitBoard rookBoard, uint64_t occupancy) {
+    uint64_t friendlyPieces = _currentPlayer == WHITE ? _bitBoards[WhitePieces].getData() : _bitBoards[BlackPieces].getData();
+
+    rookBoard.forEachBit([&](int square) {
+        uint64_t attacks = getRookAttacks(square, occupancy) & ~friendlyPieces;
+        BitBoard attackBoard(attacks);
+        attackBoard.forEachBit([&](int targetSquare) {
+            moves.push_back(BitMove(square, targetSquare, Rook));
+        });
+    });
+}
+
+void Chess::generateBishopMoves(std::vector<BitMove>& moves, BitBoard bishopBoard, uint64_t occupancy) {
+    uint64_t friendlyPieces = _currentPlayer == WHITE ? _bitBoards[WhitePieces].getData() : _bitBoards[BlackPieces].getData();
+
+    bishopBoard.forEachBit([&](int square) {
+        uint64_t attacks = getBishopAttacks(square, occupancy) & ~friendlyPieces;
+        BitBoard attackBoard(attacks);
+        attackBoard.forEachBit([&](int targetSquare) {
+            moves.push_back(BitMove(square, targetSquare, Bishop));
+        });
+    });
+}
+
+void Chess::generateQueenMoves(std::vector<BitMove>& moves, BitBoard queenBoard, uint64_t occupancy) {
+    uint64_t friendlyPieces = _currentPlayer == WHITE ? _bitBoards[WhitePieces].getData() : _bitBoards[BlackPieces].getData();
+
+    queenBoard.forEachBit([&](int square) {
+        uint64_t attacks = getQueenAttacks(square, occupancy) & ~friendlyPieces;
+        BitBoard attackBoard(attacks);
+        attackBoard.forEachBit([&](int targetSquare) {
+            moves.push_back(BitMove(square, targetSquare, Queen));
+        });
+    });
+}
+
+bool Chess::isSquareAttacked(int square, int attackerColor, const BitBoard boards[NumBitBoards]) const
+{
+    const uint64_t occupied = boards[OccupiedSquares].getData();
+    const int rank = square / 8;
+    const int file = square % 8;
+
+    const int pawnBoardIndex = (attackerColor == WHITE) ? WhitePawns : BlackPawns;
+    const uint64_t pawns = boards[pawnBoardIndex].getData();
+
+    if (attackerColor == WHITE) {
+        if (rank > 0) {
+            if (file > 0) {
+                int source = (rank - 1) * 8 + (file - 1);
+                if (pawns & (1ULL << source)) return true;
+            }
+            if (file < 7) {
+                int source = (rank - 1) * 8 + (file + 1);
+                if (pawns & (1ULL << source)) return true;
+            }
+        }
+    } else {
+        if (rank < 7) {
+            if (file > 0) {
+                int source = (rank + 1) * 8 + (file - 1);
+                if (pawns & (1ULL << source)) return true;
+            }
+            if (file < 7) {
+                int source = (rank + 1) * 8 + (file + 1);
+                if (pawns & (1ULL << source)) return true;
+            }
+        }
+    }
+
+    const int knightBoardIndex = (attackerColor == WHITE) ? WhiteKnights : BlackKnights;
+    if (_knightBitboards[square].getData() & boards[knightBoardIndex].getData()) {
+        return true;
+    }
+
+    const int kingBoardIndex = (attackerColor == WHITE) ? WhiteKing : BlackKing;
+    if (KingAttacks[square] & boards[kingBoardIndex].getData()) {
+        return true;
+    }
+
+    const int bishopBoardIndex = (attackerColor == WHITE) ? WhiteBishops : BlackBishops;
+    const int rookBoardIndex = (attackerColor == WHITE) ? WhiteRooks : BlackRooks;
+    const int queenBoardIndex = (attackerColor == WHITE) ? WhiteQueens : BlackQueens;
+
+    const uint64_t bishopLikeAttackers = boards[bishopBoardIndex].getData() | boards[queenBoardIndex].getData();
+    if (getBishopAttacks(square, occupied) & bishopLikeAttackers) {
+        return true;
+    }
+
+    const uint64_t rookLikeAttackers = boards[rookBoardIndex].getData() | boards[queenBoardIndex].getData();
+    if (getRookAttacks(square, occupied) & rookLikeAttackers) {
+        return true;
+    }
+
+    return false;
+}
+
+bool Chess::moveLeavesKingInCheck(const BitMove& move, int movingColor) const
+{
+    BitBoard boardAfterMove[NumBitBoards];
+    for (int i = 0; i < NumBitBoards; ++i) {
+        boardAfterMove[i] = _bitBoards[i].getData();
+    }
+
+    const int movingPieceBoardIndex = getPieceBoardIndex(movingColor, move.piece);
+    if (movingPieceBoardIndex < 0) {
+        return true;
+    }
+
+    const uint64_t fromMask = 1ULL << move.from;
+    const uint64_t toMask = 1ULL << move.to;
+
+    boardAfterMove[movingPieceBoardIndex] = (boardAfterMove[movingPieceBoardIndex].getData() & ~fromMask) | toMask;
+
+    if (movingColor == WHITE) {
+        boardAfterMove[BlackPawns] = boardAfterMove[BlackPawns].getData() & ~toMask;
+        boardAfterMove[BlackKnights] = boardAfterMove[BlackKnights].getData() & ~toMask;
+        boardAfterMove[BlackBishops] = boardAfterMove[BlackBishops].getData() & ~toMask;
+        boardAfterMove[BlackRooks] = boardAfterMove[BlackRooks].getData() & ~toMask;
+        boardAfterMove[BlackQueens] = boardAfterMove[BlackQueens].getData() & ~toMask;
+        boardAfterMove[BlackKing] = boardAfterMove[BlackKing].getData() & ~toMask;
+    } else {
+        boardAfterMove[WhitePawns] = boardAfterMove[WhitePawns].getData() & ~toMask;
+        boardAfterMove[WhiteKnights] = boardAfterMove[WhiteKnights].getData() & ~toMask;
+        boardAfterMove[WhiteBishops] = boardAfterMove[WhiteBishops].getData() & ~toMask;
+        boardAfterMove[WhiteRooks] = boardAfterMove[WhiteRooks].getData() & ~toMask;
+        boardAfterMove[WhiteQueens] = boardAfterMove[WhiteQueens].getData() & ~toMask;
+        boardAfterMove[WhiteKing] = boardAfterMove[WhiteKing].getData() & ~toMask;
+    }
+
+    rebuildAggregateBoards(boardAfterMove);
+
+    const int kingBoardIndex = (movingColor == WHITE) ? WhiteKing : BlackKing;
+    const uint64_t kingBoard = boardAfterMove[kingBoardIndex].getData();
+    if (kingBoard == 0) {
+        return true;
+    }
+
+    const int kingSquare = bitScanForward(kingBoard);
+    const int enemyColor = (movingColor == WHITE) ? BLACK : WHITE;
+    return isSquareAttacked(kingSquare, enemyColor, boardAfterMove);
+}
+
 void Chess::generatePawnMoveList(std::vector<BitMove>& moves, const BitBoard pawns, const BitBoard emptySquares, int colorAsInt) {
     uint64_t enemyPieces = colorAsInt == WHITE ? _bitBoards[BlackPieces].getData() : _bitBoards[WhitePieces].getData();
     uint64_t emptyBits = emptySquares.getData();
@@ -412,8 +613,8 @@ void Chess::generatePawnMoveList(std::vector<BitMove>& moves, const BitBoard paw
 
 std::vector<BitMove> Chess::generateAllMoves()
 {
-    std::vector<BitMove> moves;
-    moves.reserve(32);
+    std::vector<BitMove> pseudoMoves;
+    pseudoMoves.reserve(64);
     std::string state = stateString();
 
     for (int i = 0; i < NumBitBoards; i++) {
@@ -431,17 +632,33 @@ std::vector<BitMove> Chess::generateAllMoves()
 
     // Calculate empty squares
     _bitBoards[EmptySquares] = ~_bitBoards[OccupiedSquares].getData();
+    const uint64_t occupancy = _bitBoards[OccupiedSquares].getData();
     
     // Generate moves for current player's pieces
     if (_currentPlayer == WHITE) {
-        generatePawnMoveList(moves, _bitBoards[WhitePawns], _bitBoards[EmptySquares], WHITE);
-        generateKnightMoves(moves, _bitBoards[WhiteKnights], _bitBoards[OccupiedSquares].getData());
-        generateKingMoves(moves, _bitBoards[WhiteKing], _bitBoards[OccupiedSquares].getData());
+        generatePawnMoveList(pseudoMoves, _bitBoards[WhitePawns], _bitBoards[EmptySquares], WHITE);
+        generateKnightMoves(pseudoMoves, _bitBoards[WhiteKnights], occupancy);
+        generateBishopMoves(pseudoMoves, _bitBoards[WhiteBishops], occupancy);
+        generateRookMoves(pseudoMoves, _bitBoards[WhiteRooks], occupancy);
+        generateQueenMoves(pseudoMoves, _bitBoards[WhiteQueens], occupancy);
+        generateKingMoves(pseudoMoves, _bitBoards[WhiteKing], occupancy);
     } else {
-        generatePawnMoveList(moves, _bitBoards[BlackPawns], _bitBoards[EmptySquares], BLACK);
-        generateKnightMoves(moves, _bitBoards[BlackKnights], _bitBoards[OccupiedSquares].getData());
-        generateKingMoves(moves, _bitBoards[BlackKing], _bitBoards[OccupiedSquares].getData());
+        generatePawnMoveList(pseudoMoves, _bitBoards[BlackPawns], _bitBoards[EmptySquares], BLACK);
+        generateKnightMoves(pseudoMoves, _bitBoards[BlackKnights], occupancy);
+        generateBishopMoves(pseudoMoves, _bitBoards[BlackBishops], occupancy);
+        generateRookMoves(pseudoMoves, _bitBoards[BlackRooks], occupancy);
+        generateQueenMoves(pseudoMoves, _bitBoards[BlackQueens], occupancy);
+        generateKingMoves(pseudoMoves, _bitBoards[BlackKing], occupancy);
     }
 
-    return moves;
+    std::vector<BitMove> legalMoves;
+    legalMoves.reserve(pseudoMoves.size());
+    const int movingColor = _currentPlayer;
+    for (const BitMove& move : pseudoMoves) {
+        if (!moveLeavesKingInCheck(move, movingColor)) {
+            legalMoves.push_back(move);
+        }
+    }
+
+    return legalMoves;
 }

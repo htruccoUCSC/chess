@@ -63,16 +63,23 @@ private:
     BitBoard generateKnightMovesBitboard(int square);
     void generateKnightMoves(std::vector<BitMove>& moves, BitBoard knightBoard, uint64_t occupancy);
     void generateKingMoves(std::vector<BitMove>& moves, BitBoard kingBoard, uint64_t occupancy);
+    void generateRookMoves(std::vector<BitMove>& moves, BitBoard rookBoard, uint64_t occupancy);
+    void generateBishopMoves(std::vector<BitMove>& moves, BitBoard bishopBoard, uint64_t occupancy);
+    void generateQueenMoves(std::vector<BitMove>& moves, BitBoard queenBoard, uint64_t occupancy);
 
     void generatePawnMoveList(std::vector<BitMove>& moves, const BitBoard pawns, const BitBoard emptySquares, int colorAsInt);
 
     std::vector<BitMove> generateAllMoves();
+    bool isSquareAttacked(int square, int attackerColor, const BitBoard boards[NumBitBoards]) const;
+    bool moveLeavesKingInCheck(const BitMove& move, int movingColor) const;
+    void rebuildAggregateBoards(BitBoard boards[NumBitBoards]) const;
+    int getPieceBoardIndex(int color, int pieceType) const;
     void addPawnBitboardMovesToList(std::vector<BitMove>& moves, const BitBoard pawnBoard, const int shift);
     void addMoveIfValid(const char *state, std::vector<BitMove>& moves, int fromRow, int fromCol, int toRow, int toCol);
     void generatePawnMoves(const char *state, std::vector<BitMove>& moves, int row, int col, int colorAsInt);
     void generateKnightMoves(std::vector<BitMove>& moves, std::string &state);
 
-    inline int bitScanForward(uint64_t bb) {
+    inline int bitScanForward(uint64_t bb) const {
 #if defined(_MSC_VER) && !defined(__clang__)
         unsigned long index;
         _BitScanForward64(&index, bb);
